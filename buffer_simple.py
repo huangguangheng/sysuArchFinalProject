@@ -1,0 +1,114 @@
+from layer_compiler.enum_def import Buf, Op
+
+# CONTEXT that ONLY CONSIDER SIZE (NOT ADDRESS)
+class SimpleContext:
+    def __init__(self, nnid, buf_name):
+        self.nnid = nnid
+        self.buf_name = buf_name
+        self.size = 0
+        self.to_recover = 0
+
+    def push_context(self, size):
+        self.size += size
+
+    def flush(self, size=-1):
+        if size < 0:
+            #print(f"{self.buf_name} FLUSH {self.size}")
+            self.size = 0
+        else:
+            self.size = max(self.size-size, 0)
+            #temp = min(size, self.size)
+            #print(f"{self.buf_name} FLUSH {temp}")
+        
+    
+    def checkout_context(self, size=-1):
+        if size < 0:
+            self.to_recover = self.size
+            self.size = 0
+        else:
+            self.to_recover = min(self.size, size)
+            self.size = max(self.size-size, 0)
+
+        return self.to_recover
+
+    def recover_context(self):
+        temp = self.to_recover
+        self.size += self.to_recover
+        self.to_recover = 0
+
+        return temp
+        
+        
+
+# BUFFER that ASSUMES ENOUGH SPACE
+class SimpleBuffer:
+    def  __init__(self, size, bandwidth, latency, name):
+        self.size = int(size)
+        self.bandwidth = int(bandwidth)
+        self.latency = int(latency)
+        self.processing = 0
+        self.name = name
+        self.context_list = {}
+
+        print(f"\n  Buffer {self.name} Initialization")
+        print(f"- Size:      {self.size}")
+        print(f"- Bandwidth: {self.bandwidth}")
+        print(f"- Latency:   {self.latency}\n")
+
+    # LOAD_TILE
+    def load(self, nnid, size):
+        if nnid not in self.context_list:
+            #print(f"{self.name}: Context of {nnid} created at load")
+            self.context_list[nnid] = SimpleContext(nnid, self.name)
+        self.processing = int(size/self.bandwidth) + self.latency
+
+    # STORE_TILE
+    def store(self, nnid, size=-1):
+        if nnid not in self.context_list:
+            #print(f"{self.name}: Context of {nnid} created at load")
+            self.context_list[nnid] = SimpleContext(nnid, self.name)
+        size = self.context_list[nnid].size
+        self.processing = int(size/self.bandwidth) + self.latency
+        self.context_list[nnid].flush()
+
+    # STORE_FAKE
+    def save(self, size, nnid):
+        if nnid not in self.context_list:
+            #print(f"{self.name}: Context of {nnid} created at load")
+            self.context_list[nnid] = SimpleContext(nnid, self.name)
+        self.context_list[nnid].push_context(size)
+
+    def checkout(self, nnid):
+        size = self.context_list[nnid].checkout_context()
+        print(f"!!!!!!!!!!! CHECKOUT CALLED : {size}")
+        return int(size/self.bandwidth) + self.latency
+            
+    def recover(self, nnid):
+        if nnid not in self.context_list:
+            return 0
+        size = self.context_list[nnid].recover_context()
+        print(f"??????????? RECOVER CALLED : {size}")
+        return int(size/self.bandwidth) + self.latency
+
+    def store_fake(self, nnid):
+        self.context_list[nnid].flush()
+
+    def process(self, op=None, size=None, nnid=None, done=True):
+        if self.processing == 0:
+            if all((op, nnid)):
+                if op == Op.LOAD_TILE and size != None:
+                    self.load(nnid, size)
+                elif op == Op.STORE_TILE:
+                    self.store(nnid)
+            else:
+                pass
+        elif self.processing > 0:
+            self.processing -= 1
+        else:
+            self.processing = 0
+
+    def context_status(self, nnid):
+        if nnid in self.context_list:
+            print(f" Context Status of NNID [{nnid}] at {self.name}: {self.context_list[nnid].size}")
+        else:
+            print(f" Context Status of NNID [{nnid}] at {self.name}: Not Created Yet")
